@@ -1,25 +1,28 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0,user-scalable=no">
-  <title>今天吃什么</title>
-  <link rel="stylesheet" href="style.css">
-</head>
-<body>
-  <div class="container">
-    <h1 class="title">今天吃什么</h1>
-    <div id="restaurant-list"></div>
-    <div class="add-restaurant">
-      <input type="text" id="restaurant-name" placeholder="加个新的地儿">
-      <button onclick="addRestaurant()">添加</button>
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0,user-scalable=no"
+    />
+    <title>今天吃什么</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div class="container">
+      <h3 class="title">今天吃什么</h3>
+      <div id="restaurant-list"></div>
+      <div class="add-restaurant">
+        <input type="text" id="restaurant-name" placeholder="加个新的地儿" />
+        <button onclick="addRestaurant()">添加</button>
+      </div>
+      <div id="error-message"></div>
+      <button id="btn-spin" class="spin-button" onclick="spinWheel()">今天吃什么</button>
+      <div id="selected-restaurant"></div>
+      <div id="selection-info"></div>
+      <div id="history-list"></div>
     </div>
-    <div id="error-message"></div>
-    <button class="spin-button" onclick="spinWheel()">今天吃什么</button>
-    <div id="selected-restaurant"></div>
-    <div id="selection-info"></div>
-    <div id="history-list"></div>
-  </div>
-  <script src="script.js"></script>
-</body>
+    <script src="script.js"></script>
+  </body>
 </html>
