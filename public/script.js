@@ -23,6 +23,7 @@ const colors = [
 let currentVersion = null;
 let currRestaurant = null;
 var spining = false;
+const restaurantNameMaxlength = 9;
 
 document.addEventListener("DOMContentLoaded", () => {
   fetchRestaurants().finally(() => {
@@ -56,9 +57,23 @@ function fetchRestaurants() {
       data.data.forEach((restaurant) => {
         const div = document.createElement("div");
         div.className = "restaurant-item";
-        div.innerHTML = `
-            <span>${restaurant.name}</span>
-          `;
+        if (restaurant.id === currRestaurant?.restaurant_id) {
+          div.classList.add("highlight");
+        }
+
+        const img = document.createElement("img");
+        img.src = "./assets/icon_edit.png";
+        img.classList.add("edit-btn");
+        img.onclick = function () {
+          editRestaurantName(restaurant);
+        };
+        div.appendChild(img);
+
+        const name = document.createElement("span");
+        name.innerHTML = restaurant.name;
+        name.classList.add("restaurant-name");
+        div.appendChild(name)
+
         const delbtn = document.createElement("img");
         delbtn.className = "btn-del";
         delbtn.src = './assets/icon_del.png';
@@ -66,16 +81,15 @@ function fetchRestaurants() {
           deleteRestaurant(restaurant.id, restaurant.name);
         };
         div.appendChild(delbtn);
-        const img = document.createElement("img");
-        img.src = "./assets/icon_edit.png";
-        img.style = "width:12px;height:12px;";
-        img.onclick = function () {
-          editRestaurant(restaurant.id, restaurant.name);
+
+        const weight = document.createElement("span");
+        weight.innerHTML = `权重(${restaurant.weight})`;
+        weight.classList.add("restaurant-weight")
+        weight.onclick = function () {
+          editRestaurantWeight(restaurant);
         };
-        if (restaurant.id === currRestaurant?.restaurant_id) {
-          div.classList.add("highlight");
-        }
-        div.appendChild(img);
+        div.appendChild(weight);
+
         restaurantList.appendChild(div);
       });
     });
@@ -83,9 +97,14 @@ function fetchRestaurants() {
 
 function addRestaurant() {
   const name = document.getElementById("restaurant-name").value;
+  name = name.trim();
   if (name.trim() === "") {
-    showErrorMessage("请输入饭店名");
+    alert("请输入有效的饭店名");
     return;
+  }
+  if(name.length > restaurantNameMaxlength) {
+    alert(`饭店名不能超过${restaurantNameMaxlength}个字符`)
+    return
   }
 
   fetch("/api/restaurants", {
@@ -118,24 +137,54 @@ function deleteRestaurant(id, name) {
   }
 }
 
-function editRestaurant(id, name) {
+function editRestaurant(restaurant) {
+  const { id, name, weight } = restaurant;
+  return fetch(`/api/restaurants/${id}`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ name, weight }),
+  })
+    .then((response) => response.json())
+    .then((data) => {
+      if (data.error) {
+        showErrorMessage(data.error);
+      } else {
+        fetchRestaurants();
+      }
+    });
+}
+
+function editRestaurantName(restaurant) {
+  const { id, name, weight } = restaurant;
   const newName = prompt("请输入新的名称", name);
   if (newName) {
-    fetch(`/api/restaurants/${id}`, {
-      method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ name: newName }),
-    })
-      .then((response) => response.json())
-      .then((data) => {
-        if (data.error) {
-          showErrorMessage(data.error);
-        } else {
-          fetchRestaurants();
-        }
-      });
+    newName = newName.trim();
+    if (newName.trim() === "") {
+      alert("请输入有效的饭店名");
+      return;
+    }
+    if(newName.length > restaurantNameMaxlength) {
+      alert(`饭店名不能超过${restaurantNameMaxlength}个字符`)
+      return
+    }
+    if (name === newName) {
+      return;
+    }
+    return editRestaurant({ id, name: newName, weight })
+  }
+}
+
+function editRestaurantWeight(restaurant) {
+  const { id, name, weight } = restaurant;
+  const newWeight = prompt("请输入新的权重(0~100)", weight);
+  if (newWeight) {
+    if(!/^\d+$/.test(newWeight) || newWeight < 0 || newWeight > 100) {
+      alert('权重值必须为0~100的整数')
+      return
+    }
+    return editRestaurant({ id, name, weight: newWeight })
   }
 }
 

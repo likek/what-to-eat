@@ -86,6 +86,7 @@ db.serialize(() => {
     CREATE TABLE IF NOT EXISTS restaurants (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT UNIQUE,
+      weight INTEGER CHECK(weight BETWEEN 0 AND 100) DEFAULT 1,
       disabled INTEGER DEFAULT 0,
       created_time TEXT DEFAULT CURRENT_TIMESTAMP,
       updated_time TEXT DEFAULT CURRENT_TIMESTAMP
@@ -148,11 +149,11 @@ app.get("/api/restaurants", (req, res) => {
 });
 
 app.post('/api/restaurants', (req, res) => {
-  const { name } = req.body;
+  const { name, weight = 1 } = req.body;
   const createdAt = new Date().toISOString();
   const updatedAt = new Date().toISOString();
   
-  db.run('INSERT INTO restaurants (name, created_time, updated_time) VALUES (?, ?, ?)', [name, createdAt, updatedAt], function (err) {
+  db.run('INSERT INTO restaurants (name, weight, created_time, updated_time) VALUES (?, ?, ?)', [name, weight, createdAt, updatedAt], function (err) {
     if (err) {
       res.status(500).json({ error: '饭店名已存在' });
       return;
@@ -174,60 +175,45 @@ app.delete('/api/restaurants/:id', (req, res) => {
   });
 });
 
-app.post("/api/spin", (req, res) => {
-  db.get(
-    "SELECT COUNT(*) AS count FROM restaurants WHERE disabled = 0",
-    (err, row) => {
+app.post('/api/spin', (req, res) => {
+  db.all('SELECT * FROM restaurants WHERE disabled = 0', (err, rows) => {
+    if (err) {
+      res.status(500).json({ error: err.message });
+      return;
+    }
+
+    if (!rows.length) {
+      res.status(404).json({ error: '没有饭店信息' });
+      return;
+    }
+
+    const weightedList = rows.flatMap((restaurant) =>
+      Array(restaurant.weight).fill(restaurant)
+    );
+
+    if (!weightedList.length) {
+      res.status(404).json({ error: '所有饭店的权重均为0' });
+      return;
+    }
+
+    const randomIndex = Math.floor(Math.random() * weightedList.length);
+    const selectedRestaurant = weightedList[randomIndex];
+    const ip = req.ip;
+    const timestamp = Math.floor(Date.now() / 1000) // Unix时间戳
+
+    db.run('INSERT INTO selections (restaurant_id, ip, timestamp) VALUES (?, ?, ?)', [selectedRestaurant.id, ip, timestamp], function (err) {
       if (err) {
         res.status(500).json({ error: err.message });
         return;
       }
 
-      const count = row.count;
-      if (count === 0) {
-        res.status(400).json({ error: "没有可用的饭店" });
-        return;
-      }
-
-      const randomOffset = Math.floor(Math.random() * count);
-
-      db.get(
-        "SELECT id, name FROM restaurants WHERE disabled = 0 LIMIT 1 OFFSET ?",
-        [randomOffset],
-        (err, row) => {
-          if (err) {
-            res.status(500).json({ error: err.message });
-            return;
-          }
-
-          const selectedRestaurant = row.name;
-          const restaurantId = row.id;
-          const ip =
-            req.ip ||
-            req.headers["x-forwarded-for"] ||
-            req.connection.remoteAddress;
-          const timestamp = Math.floor(Date.now() / 1000); // Unix 时间戳
-
-          db.run(
-            "INSERT INTO selections (restaurant_id, ip, timestamp) VALUES (?, ?, ?)",
-            [restaurantId, ip, timestamp],
-            function (err) {
-              if (err) {
-                res.status(500).json({ error: err.message });
-                return;
-              }
-
-              res.json({
-                name: selectedRestaurant,
-                ip: ip,
-                timestamp: new Date(timestamp * 1000).toISOString(), // 转换回 ISO 时间字符串
-              });
-            }
-          );
-        }
-      );
-    }
-  );
+      res.json({
+        name: selectedRestaurant.name,
+        ip,
+        timestamp,
+      });
+    });
+  });
 });
 
 app.get("/api/history", (req, res) => {
@@ -258,10 +244,10 @@ app.get("/api/history", (req, res) => {
 
 app.put('/api/restaurants/:id', (req, res) => {
   const { id } = req.params;
-  const newName = req.body.name;
+  const { name, weight = 1 } = req.body;
   const updatedAt = new Date().toISOString();
 
-  db.get('SELECT id FROM restaurants WHERE name = ? AND id != ?', [newName, id], (err, row) => {
+  db.get('SELECT id FROM restaurants WHERE name = ? AND id != ?', [name, id], (err, row) => {
     if (err) {
       res.status(500).json({ error: err.message });
       return;
@@ -272,12 +258,12 @@ app.put('/api/restaurants/:id', (req, res) => {
       return;
     }
 
-    db.run('UPDATE restaurants SET name = ?, updated_time = ? WHERE id = ?', [newName, updatedAt, id], function (err) {
+    db.run('UPDATE restaurants SET name = ?, weight = ?, updated_time = ? WHERE id = ?', [name, weight, updatedAt, id], function (err) {
       if (err) {
         res.status(500).json({ error: err.message });
         return;
       }
-      res.json({ data: { id, name: newName, updated_time: updatedAt } });
+      res.json({ data: { id, name: name, updated_time: updatedAt } });
     });
   });
 });

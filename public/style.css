@@ -54,8 +54,19 @@ body {
   white-space: nowrap;
   font-size: 12px;
 }
-.restaurant-item > span:nth-child(1) {
+
+.restaurant-name {
   margin-right: auto;
+}
+
+.edit-btn {
+  margin-right: 2px;
+  width: 10px;
+}
+
+.restaurant-weight {
+  font-size: 11px;
+  color: #999;
 }
 
 button {
@@ -70,7 +81,7 @@ button {
 }
 
 .btn-del {
-  margin: 0 14px 0 0;
+  margin: 0 4px 0 0;
   width: 12px;
 }
 
