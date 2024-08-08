@@ -2,7 +2,7 @@ const express = require("express");
 const sqlite3 = require("sqlite3").verbose();
 const cors = require("cors");
 const rateLimit = require("express-rate-limit");
-
+const fs = require('fs');
 const app = express();
 const port = 3000;
 
@@ -29,12 +29,57 @@ const logFormat = (req, res) => {
   };
 };
 
+const config = JSON.parse(fs.readFileSync('./config.json', 'utf8'));
+const maxRequestsPerMinute = config.maxRequestsPerMinute;
+const blacklistDurationMs = config.blacklistDurationMs;
+
 const limiter = rateLimit({
   windowMs: 1 * 60 * 1000,
-  max: 60,
-  message: "该ip访问过于频繁，暂时禁止访问，1分钟后再试。",
+  max: maxRequestsPerMinute,
+  handler: (req, res, next) => {
+    const ip = req.ip;
+    const addedTime = new Date().toISOString();
+    db.run('INSERT OR REPLACE INTO blacklist (ip, added_time) VALUES (?, ?)', [ip, addedTime], function (err) {
+      if (err) {
+        return res.status(500).json({ error: '内部服务器错误' });
+      }
+      res.status(429).json({
+        error: `请求过于频繁，您已被列入黑名单，${blacklistDurationMs/1000}秒后解除。`,
+      });
+    });
+  },
 });
 
+function checkBlacklist(req, res, next) {
+  const ip = req.ip;
+  const currentTime = Date.now();
+
+  db.get('SELECT added_time FROM blacklist WHERE ip = ?', [ip], (err, row) => {
+    if (err) {
+      return res.status(500).json({ error: '内部服务器错误' });
+    }
+    if (row) {
+      const duration = currentTime - new Date(row.added_time).getTime()
+      if (duration > blacklistDurationMs) {
+        // 黑名单时间已过，移除IP
+        db.run('DELETE FROM blacklist WHERE ip = ?', [ip], (err) => {
+          if (err) {
+            return res.status(500).json({ error: '内部服务器错误' });
+          }
+          next();
+        });
+      } else {
+        return res.status(403).json({
+          error: `您已被列入黑名单，无法访问该资源，${Math.floor((blacklistDurationMs - duration)/1000)}秒后解除。`,
+        });
+      }
+    } else {
+      next();
+    }
+  });
+}
+
+app.use(checkBlacklist);
 app.use(limiter);
 app.use(cors());
 app.use(express.json());
@@ -118,6 +163,13 @@ db.serialize(() => {
       timestamp TEXT
     )
   `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS blacklist (
+      ip TEXT PRIMARY KEY,
+      added_time TEXT
+    );
+    `)
 
   db.run(`
     CREATE TRIGGER IF NOT EXISTS limit_logs
