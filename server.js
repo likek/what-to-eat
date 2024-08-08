@@ -131,7 +131,7 @@ db.serialize(() => {
     `
     CREATE TABLE IF NOT EXISTS restaurants (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT UNIQUE,
+      name TEXT,
       weight INTEGER CHECK(weight BETWEEN 0 AND 100) DEFAULT 1,
       disabled INTEGER DEFAULT 0,
       created_time TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -205,13 +205,25 @@ app.post('/api/restaurants', (req, res) => {
   const { name, weight = 1 } = req.body;
   const createdAt = new Date().toISOString();
   const updatedAt = new Date().toISOString();
-  
-  db.run('INSERT INTO restaurants (name, weight, created_time, updated_time) VALUES (?, ?, ?)', [name, weight, createdAt, updatedAt], function (err) {
+
+  db.get('SELECT id FROM restaurants WHERE disabled = 0 AND name = ?', [name], (err, row) => {
     if (err) {
-      res.status(500).json({ error: '饭店名已存在' });
+      res.status(500).json({ error: err.message });
       return;
     }
-    res.json({ data: { id: this.lastID, name, created_time: createdAt, updated_time: updatedAt } });
+
+    if (row) {
+      res.status(400).json({ error: '饭店名已存在' });
+      return;
+    }
+
+    db.run('INSERT INTO restaurants (name, weight, created_time, updated_time) VALUES (?, ?, ?, ?)', [name, weight, createdAt, updatedAt], function (err) {
+      if (err) {
+        res.status(500).json({ error: err.message });
+        return;
+      }
+      res.json({ data: { id: this.lastID, name, created_time: createdAt, updated_time: updatedAt } });
+    });
   });
 });
 
@@ -300,7 +312,7 @@ app.put('/api/restaurants/:id', (req, res) => {
   const { name, weight = 1 } = req.body;
   const updatedAt = new Date().toISOString();
 
-  db.get('SELECT id FROM restaurants WHERE name = ? AND id != ?', [name, id], (err, row) => {
+  db.get('SELECT id FROM restaurants WHERE disabled = 0 AND name = ? AND id != ?', [name, id], (err, row) => {
     if (err) {
       res.status(500).json({ error: err.message });
       return;
@@ -336,7 +348,7 @@ function getLocalIp() {
   const interfaces = os.networkInterfaces();
   for (const name of Object.keys(interfaces)) {
     for (const iface of interfaces[name]) {
-      if (iface.family === 'IPv4' && !iface.internal) {
+      if (iface.family === 'IPv4' && !iface.internal && iface.address !== '127.0.0.1' && iface.mac !== '00:00:00:00:00:00') {
         return iface.address;
       }
     }

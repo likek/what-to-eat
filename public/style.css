@@ -9,6 +9,10 @@ body {
   overflow: auto;
 }
 
+.pointer {
+  cursor: pointer;
+}
+
 .container {
   background: white;
   padding: 20px;

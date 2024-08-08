@@ -63,7 +63,7 @@ function fetchRestaurants() {
 
         const img = document.createElement("img");
         img.src = "./assets/icon_edit.png";
-        img.classList.add("edit-btn");
+        img.classList.add("edit-btn", "pointer");
         img.onclick = function () {
           editRestaurantName(restaurant);
         };
@@ -76,6 +76,7 @@ function fetchRestaurants() {
 
         const delbtn = document.createElement("img");
         delbtn.className = "btn-del";
+        delbtn.classList.add('pointer')
         delbtn.src = './assets/icon_del.png';
         delbtn.onclick = function () {
           deleteRestaurant(restaurant.id, restaurant.name);
@@ -84,7 +85,7 @@ function fetchRestaurants() {
 
         const weight = document.createElement("span");
         weight.innerHTML = `权重(${restaurant.weight})`;
-        weight.classList.add("restaurant-weight")
+        weight.classList.add("restaurant-weight", "pointer")
         weight.onclick = function () {
           editRestaurantWeight(restaurant);
         };
@@ -96,7 +97,7 @@ function fetchRestaurants() {
 }
 
 function addRestaurant() {
-  const name = document.getElementById("restaurant-name").value;
+  let name = document.getElementById("restaurant-name").value;
   name = name.trim();
   if (name.trim() === "") {
     alert("请输入有效的饭店名");
@@ -158,7 +159,7 @@ function editRestaurant(restaurant) {
 
 function editRestaurantName(restaurant) {
   const { id, name, weight } = restaurant;
-  const newName = prompt("请输入新的名称", name);
+  let newName = prompt("请输入新的名称", name);
   if (newName) {
     newName = newName.trim();
     if (newName.trim() === "") {
@@ -191,7 +192,7 @@ function editRestaurantWeight(restaurant) {
 function showErrorMessage(message) {
   const errorMessage = document.getElementById("error-message");
   errorMessage.textContent = message;
-  errorMessage.style.display = '';
+  errorMessage.style.display = 'block';
   clearTimeout(window.errorMessageTimer);
   window.errorMessageTimer = setTimeout(() => {
     errorMessage.style.display = 'none';
