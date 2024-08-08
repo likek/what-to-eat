@@ -5,6 +5,7 @@ const rateLimit = require("express-rate-limit");
 const fs = require('fs');
 const app = express();
 const port = 3000;
+const os = require('os');
 
 const logFormat = (req, res) => {
   const requestTime = new Date().toLocaleString();
@@ -331,6 +332,20 @@ app.get("/api/version", (req, res) => {
   });
 });
 
+function getLocalIp() {
+  const interfaces = os.networkInterfaces();
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name]) {
+      if (iface.family === 'IPv4' && !iface.internal) {
+        return iface.address;
+      }
+    }
+  }
+  return 'localhost';
+}
+
+const localIp = getLocalIp();
+
 app.listen(port, () => {
-  console.log(`Server running on port ${port}`);
+  console.log(`Server running at http://${localIp}:${port}`);
 });
