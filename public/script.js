@@ -311,7 +311,12 @@ function fetchHistory() {
         }: ${entry.name}`;
         div.style.color = cMap[entry.ip].color;
         historyList.appendChild(div);
-        setCurr(data.data[0]);
       });
+      if (data.data.length > 0) {
+        setCurr(data.data[0]);
+        historyList.style.display = '';
+      } else {
+        historyList.style.display = 'none';
+      }
     });
 }
