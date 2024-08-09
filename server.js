@@ -173,6 +173,14 @@ db.serialize(() => {
     `)
 
   db.run(`
+    CREATE VIEW IF NOT EXISTS today_selections AS
+    SELECT s.id, s.restaurant_id, r.name, s.ip, s.timestamp
+    FROM selections s
+    JOIN restaurants r ON s.restaurant_id = r.id
+    WHERE DATE(s.timestamp, 'unixepoch', 'localtime') = DATE('now', 'localtime');
+    `)
+
+  db.run(`
     CREATE TRIGGER IF NOT EXISTS limit_logs
     AFTER INSERT ON logs
     WHEN (SELECT COUNT(*) FROM logs) > 10000
@@ -284,11 +292,7 @@ app.post('/api/spin', (req, res) => {
 app.get("/api/history", (req, res) => {
   db.all(
     `
-    SELECT selections.*, restaurants.name
-    FROM selections
-    JOIN restaurants ON selections.restaurant_id = restaurants.id
-    WHERE selections.timestamp >= strftime('%s', 'now', 'start of day')
-    ORDER BY selections.timestamp DESC
+    SELECT * FROM today_selections ORDER BY timestamp DESC
     LIMIT 20
   `,
     [],
