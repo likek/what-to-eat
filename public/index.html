@@ -11,6 +11,8 @@
   </head>
   <body>
     <div class="container">
+      <div style="color: #999;text-align: left;font-size: 10px;">当前用户: <span id="user_id"></span></div>
+      <div style="color: #999;text-align: left;font-size: 10px;">其他在线用户: <span id="users"></span></div>
       <h3 class="title">今天吃什么</h3>
       <div id="restaurant-list"></div>
       <div class="add-restaurant">
@@ -21,6 +23,8 @@
       <button id="btn-spin" class="spin-button" onclick="spinWheel()">今天吃什么</button>
       <div id="selected-restaurant"></div>
       <div id="selection-info"></div>
+      <div id="statistics"></div>
+      <button onclick="resetRound()">重开</button>
       <div id="history-list"></div>
     </div>
     <script src="script.js"></script>
