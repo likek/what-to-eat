@@ -25,7 +25,8 @@ db.serialize(() => {
       weight INTEGER CHECK(weight BETWEEN 0 AND 100) DEFAULT 1,
       disabled INTEGER DEFAULT 0,
       created_time TEXT DEFAULT CURRENT_TIMESTAMP,
-      updated_time TEXT DEFAULT CURRENT_TIMESTAMP
+      updated_time TEXT DEFAULT CURRENT_TIMESTAMP,
+      roomId INTEGER NOT NULL,
     )
     `
   );
@@ -38,9 +39,14 @@ db.serialize(() => {
       timestamp INTEGER,
       disabled INTEGER DEFAULT 0,
       FOREIGN KEY(create_user_id) REFERENCES userInfo(id),
-      FOREIGN KEY(restaurant_id) REFERENCES restaurants(id)
+      FOREIGN KEY(restaurant_id) REFERENCES restaurants(id),
+      roomId INTEGER NOT NULL,
     )
   `);
+
+  db.run(
+    "CREATE TABLE IF NOT EXISTS user_room_map (user_id INTEGER PRIMARY KEY, roomId INTEGER NOT NULL)"
+  );
 
   db.run(
     "CREATE TABLE IF NOT EXISTS version (id INTEGER PRIMARY KEY, version TEXT)"
@@ -77,7 +83,7 @@ db.serialize(() => {
 
   db.run(`
     CREATE VIEW IF NOT EXISTS today_selections AS
-    SELECT s.restaurant_id, r.name, s.ip, s.timestamp, s.create_user_id, s.disabled
+    SELECT s.restaurant_id, r.name, s.ip, s.timestamp, s.create_user_id, s.disabled, s.roomId
     FROM selections s
     JOIN restaurants r ON s.restaurant_id = r.id
     WHERE DATE(s.timestamp, 'unixepoch', 'localtime') = DATE('now', 'localtime') AND r.disabled = 0;
