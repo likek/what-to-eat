@@ -7,30 +7,22 @@ import { v4 as uuidv4 } from 'uuid';
 import useragent from 'useragent';
 import cookieParser from 'cookie-parser';
 import cookie from 'cookie';
-import Searcher from './ip2region.js';
+import Searcher from './server/ip2region.js';
 import http from 'http';
 import WebSocket, { WebSocketServer } from 'ws';
 import os from 'os';
-import db from './dbserialize.js';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
+import dbPromise from './server/db.js';
+import { serializeDb } from './server/dbserialize.js';
+import { limiter } from "./server/middleware/limiter.js";
+import { checkBlacklist } from "./server/middleware/blackList.js";
+import { normalizeIp, getRequestInfo } from './server/utils/index.js';
+import { writeRequestLog, writeWsLog } from './server/logManager.js';
 
 const app = express();
 const port = 3000;
 app.set("trust proxy", 1);
-
-const normalizeIp = (ip) => {
-  if (!ip) {
-      return 'unknown ip';
-  }
-  if (ip.startsWith('::ffff:')) {
-      return ip.substring(7);
-  }
-  if(ip === '::1') {
-    return '127.0.0.1';
-  }
-  return ip;
-};
 
 const normalizeDateTime = (time) => {
   return time.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })
@@ -44,168 +36,9 @@ function getRandomInt(min, max) {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const regineDBPath =  path.join(__dirname, 'ip2region.xdb');
-const vectorIndex = Searcher.loadVectorIndexFromFile(regineDBPath)
-const searcher = Searcher.newWithVectorIndex(regineDBPath, vectorIndex)
-
 const httpServer = http.createServer(app);
 const wss = new WebSocketServer({ server: httpServer });
 const clientsById = new Map();
-
-const getRequestInfo = async (req, res) => {
-  const requestTime = normalizeDateTime(new Date());
-  const userIp = normalizeIp(req.clientIp || req.ip);
-  const requestMethod = req.method;
-  const requestUrl = decodeURIComponent(req.originalUrl);
-  const requestBody = decodeURIComponent(JSON.stringify(req.body));
-  const status = res?.statusCode;
-
-  let region = '';
-  try {
-      region = (await searcher.search(userIp))?.region || 'unknown';
-  } catch (e) {
-      console.error('获取ip属地出错: ', e);
-  }
-
-  const userAgentString = req.headers['user-agent'];
-  const userAgent = useragent.parse(userAgentString);
-
-  const deviceInfo = {
-      device: userAgent.device.toString(),
-      os: userAgent.os.toString(),
-      browser: userAgent.toAgent()
-  };
-
-  const data = {
-      requestTime,
-      userIp,
-      requestMethod,
-      requestUrl,
-      requestBody,
-      status,
-      userAgent: userAgentString,
-      region,
-      device: deviceInfo.device,
-      os: deviceInfo.os,
-      browser: deviceInfo.browser,
-      timestamp: normalizeDateTime(new Date())
-  };
-  
-  return data;
-};
-
-const config = JSON.parse(fs.readFileSync('./config.json', 'utf8'));
-const maxRequestsPerMinute = config.maxRequestsPerMinute;
-const blacklistDurationMs = config.blacklistDurationMs;
-
-let limiterQueue = Promise.resolve()
-const limiter = rateLimit({
-    windowMs: 1 * 60 * 1000,
-    max: maxRequestsPerMinute,
-    headers: false,
-    handler: (req, res, next) => {
-        limiterQueue = limiterQueue.finally(() => {
-            return new Promise((resolve, reject) => {
-                const ip = normalizeIp(req.clientIp || req.ip);
-                const addedTime = normalizeDateTime(new Date());
-                const cookies = req.cookies;
-                const uniqueId = cookies.uniqueId;
-                
-                // 检查是否存在相同 uniqueId 且 enabled 为 1 的记录
-                db.get('SELECT * FROM blacklist WHERE uniqueId = ? AND enabled = 1', [uniqueId], (err, row) => {
-                    if (err) {
-                        console.error('查询黑名单出错: ', err);
-                        res.status(500).json({ message: '内部服务器错误' });
-                        return reject();
-                    }
-        
-                    if (row) {
-                        // 如果存在，不进行插入操作
-                        res.status(429).json({
-                            message: `请求过于频繁，您已被列入黑名单，${blacklistDurationMs / 1000}秒后解除。`,
-                        });
-                        return resolve();
-                    } else {
-                        // 插入新的记录
-                        db.run('INSERT INTO blacklist (ip, cookies, uniqueId, added_time, enabled) VALUES (?, ?, ?, ?, 1)', [ip, JSON.stringify(cookies), uniqueId, addedTime], function (err) {
-                            if (err) {
-                                console.error('插入黑名单出错: ', err);
-                                res.status(500).json({ message: '内部服务器错误' });
-                                return reject();
-                            }
-                            res.status(429).json({
-                                message: `请求过于频繁，您已被列入黑名单，${blacklistDurationMs / 1000}秒后解除。`,
-                            });
-                            return resolve();
-                        });
-                    }
-                });
-            })
-        })
-    },
-});
-
-function checkBlacklist(req, res, next) {
-    const currentTime = Date.now();
-    const cookies = req.cookies;
-    const uniqueId = cookies.uniqueId;
-    db.get('SELECT added_time FROM blacklist WHERE uniqueId = ? AND enabled = 1', [uniqueId], (err, row) => {
-        if (err) {
-            console.error('查询黑名单出错: ', err);
-            return res.status(500).json({ message: '内部服务器错误' });
-        }
-        if (row) {
-            const duration = currentTime - new Date(row.added_time).getTime();
-            if (duration > blacklistDurationMs) {
-                // 黑名单时间已过，逻辑删除IP
-                db.run('UPDATE blacklist SET enabled = 0 WHERE uniqueId = ?', [uniqueId], (err) => {
-                    if (err) {
-                        console.error('移除IP出错: ', err);
-                        return res.status(500).json({ message: '内部服务器错误' });
-                    }
-                    next();
-                });
-            } else {
-                const black_time_left = Math.floor((blacklistDurationMs - duration) / 1000);
-                return res.status(403).json({
-                    message: `您已被列入黑名单，无法访问该资源，${black_time_left}秒后解除。`,
-                    black_time_left,
-                });
-            }
-        } else {
-            next();
-        }
-    });
-}
-
-const writeRequestLogToDB = (logData) => {
-  // 插入日志到数据库
-  const query = `
-      INSERT INTO logs_request (
-        requestTime, userIp, requestMethod, requestUrl, requestBody, status, userAgent, region, device, os, browser, timestamp
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `;
-  const values = [
-    logData.requestTime,
-    logData.userIp,
-    logData.requestMethod,
-    logData.requestUrl,
-    logData.requestBody,
-    logData.status,
-    logData.userAgent,
-    logData.region,
-    logData.device,
-    logData.os,
-    logData.browser,
-    logData.timestamp,
-  ];
-
-  db.run(query, values, (err) => {
-    if (err) {
-      console.error("Failed to insert log into database (logs_request):", err);
-    }
-  });
-};
 
 app.use(cookieParser());
 app.use(checkBlacklist);
@@ -214,23 +47,7 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static("public"));
 
-app.use(async (req, res, next) => {
-  const originalSend = res.send;
-
-  res.send = function (data) {
-    res.locals.responseData = data;
-    originalSend.apply(res, arguments);
-  };
-
-  res.on("finish", async () => {
-    const logData = await getRequestInfo(req, res);
-    // console.log(logData);
-
-    // 插入日志到数据库
-    writeRequestLogToDB(logData);
-  });
-  next();
-});
+app.use(writeRequestLog);
 
 
 function broadcastMessage(message, req, userFilter = (id, currUserId) => id !== currUserId, messagePipe = (message, id, currUserId) => message ) {
@@ -254,16 +71,8 @@ async function getUsersByUniqueIds(uniqueIds) {
   try {
     // 执行批量查询
     const query = `SELECT * FROM userInfo WHERE uniqueId IN (${uniqueIds.map(() => '?').join(',')})`;
-    const rows = await new Promise((resolve, reject) => {
-      db.all(query, uniqueIds, (err, rows) => {
-        if (err) {
-          console.error('Error querying multiple uniqueIds:', err);
-          reject(err);
-        } else {
-          resolve(rows);
-        }
-      });
-    });
+    const db = await dbPromise;
+    const rows = await db.all(query, uniqueIds);
 
     return rows;
   } catch (e) {
@@ -307,16 +116,22 @@ async function tryRegister(req, res) {
   let uniqueId = req.cookies.uniqueId;
 
   if (!uniqueId) {
-      uniqueId = uuidv4();
-      res.cookie('uniqueId', uniqueId, {
-          maxAge: 3650 * 24 * 60 * 60 * 1000,
-          httpOnly: true,
-          sameSite: 'strict'
-      });
+    uniqueId = uuidv4();
+    res.cookie('uniqueId', uniqueId, {
+      maxAge: 3650 * 24 * 60 * 60 * 1000,
+      httpOnly: true,
+      sameSite: 'strict'
+    });
   }
 
   const userInfo = await getRequestInfo(req);
-  db.run(`INSERT OR IGNORE INTO userInfo (uniqueId, ip, create_time, update_time, userAgent, region, device, os, browser) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
+  console.log('register: ', uniqueId, userInfo.userIp);
+  const db = await dbPromise;
+  const row = await db.get(`SELECT 1 FROM userInfo WHERE uniqueId = ?`, [uniqueId]);
+
+  if (!row) {
+    // 如果不存在，则插入
+    await db.run(`INSERT INTO userInfo (uniqueId, ip, create_time, update_time, userAgent, region, device, os, browser) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
       uniqueId,
       userInfo.userIp,
       userInfo.requestTime,
@@ -326,27 +141,20 @@ async function tryRegister(req, res) {
       userInfo.device,
       userInfo.os,
       userInfo.browser
-  ], (err) => {
-      if (err) {
-          console.error('Error inserting user info:', err);
-      }
-  });
+    ]);
+  }
 
-  // 修改除create_time外的其他所有字段
-  db.run(`UPDATE userInfo SET ip = ?, update_time = ?, userAgent = ?, region = ?, device = ?, os = ?, browser = ? WHERE uniqueId = ?`, [
-      userInfo.userIp,
-      userInfo.requestTime,
-      userInfo.userAgent,
-      userInfo.region,
-      userInfo.device,
-      userInfo.os,
-      userInfo.browser,
-      uniqueId
-  ],(err) => {
-      if (err) {
-          console.error('Error updating user info:', err);
-      }
-  })
+  await db.run(`UPDATE userInfo SET ip = ?, update_time = ?, userAgent = ?, region = ?, device = ?, os = ?, browser = ? WHERE uniqueId = ?`, [
+    userInfo.userIp,
+    userInfo.requestTime,
+    userInfo.userAgent,
+    userInfo.region,
+    userInfo.device,
+    userInfo.os,
+    userInfo.browser,
+    uniqueId
+  ]);
+
   return uniqueId;
 }
 
@@ -356,19 +164,25 @@ app.get('/register', async (req, res) => {
 });
 
 app.get('/api/userInfo', async (req, res) => {
-  const uniqueId = req.cookies.uniqueId;
-  const query = `
-    SELECT * FROM userInfo
-    WHERE uniqueId = ?
-  `;
-  db.get(query, [uniqueId], (err, row) => {
-    if (err) {
-      res.status(500).json({ error: err.message });
+  try {
+    const uniqueId = req.cookies.uniqueId;
+    const query = `
+      SELECT * FROM userInfo
+      WHERE uniqueId = ?
+    `;
+    const db = await dbPromise;
+    const row = await db.get(query, [uniqueId]);
+
+    if (!row) {
+      res.status(404).json({ message: 'User not found' });
       return;
     }
+
     res.json({ data: row });
-  });
-})
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 wss.on('connection', (ws, req) => {
   const cookies = cookie.parse(req.headers.cookie || '');
@@ -383,100 +197,85 @@ wss.on('connection', (ws, req) => {
   });
 });
 
-app.get("/api/restaurants", (req, res) => {
-  db.all("SELECT * FROM restaurants WHERE disabled = 0", (err, rows) => {
-    if (err) {
-      res.status(500).json({ error: err.message });
-      return;
-    }
+app.get('/api/restaurants', async (req, res) => {
+  try {
+    const db = await dbPromise;
+    const rows = await db.all("SELECT * FROM restaurants WHERE disabled = 0");
     res.json({ data: rows });
-  });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-app.post('/api/restaurants', (req, res) => {
-  const { name, weight = 1 } = req.body;
-  const createdAt = normalizeDateTime(new Date());
-  const updatedAt = normalizeDateTime(new Date());
+app.post('/api/restaurants', async (req, res) => {
+  try {
+    const { name, weight = 1 } = req.body;
+    const createdAt = normalizeDateTime(new Date());
+    const updatedAt = normalizeDateTime(new Date());
 
-  db.get('SELECT id FROM restaurants WHERE disabled = 0 AND name = ?', [name], (err, row) => {
-    if (err) {
-      res.status(500).json({ error: err.message });
-      return;
-    }
+    const db = await dbPromise;
+    const row = await db.get('SELECT id FROM restaurants WHERE disabled = 0 AND name = ?', [name]);
 
     if (row) {
       res.status(400).json({ error: '饭店名已存在' });
       return;
     }
 
-    db.run('INSERT INTO restaurants (name, weight, created_time, updated_time) VALUES (?, ?, ?, ?)', [name, weight, createdAt, updatedAt], function (err) {
-      if (err) {
-        res.status(500).json({ error: err.message });
-        return;
-      }
-      res.json({ data: { id: this.lastID, name, created_time: createdAt, updated_time: updatedAt } });
-      broadcastMessage({event: 'create_restaurant', data: { id: this.lastID, name, created_time: createdAt } }, req)
-    });
-  });
+    await db.run('INSERT INTO restaurants (name, weight, created_time, updated_time) VALUES (?, ?, ?, ?)', [name, weight, createdAt, updatedAt]);
+    res.json({ data: { id: this.lastID, name, created_time: createdAt, updated_time: updatedAt } });
+    broadcastMessage({event: 'create_restaurant', data: { id: this.lastID, name, created_time: createdAt } }, req);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-app.put('/api/restaurants/:id', (req, res) => {
-  const { id } = req.params;
-  const { name, weight = 1 } = req.body;
-  const updatedAt = normalizeDateTime(new Date());
+app.put('/api/restaurants/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, weight = 1 } = req.body;
+    const updatedAt = normalizeDateTime(new Date());
 
-  db.get('SELECT id FROM restaurants WHERE disabled = 0 AND name = ? AND id != ?', [name, id], (err, row) => {
-    if (err) {
-      res.status(500).json({ error: err.message });
-      return;
-    }
+    const db = await dbPromise;
+    const row = await db.get('SELECT id FROM restaurants WHERE disabled = 0 AND name = ? AND id != ?', [name, id]);
 
     if (row) {
       res.status(400).json({ error: '饭店名已存在' });
       return;
     }
 
-    db.run('UPDATE restaurants SET name = ?, weight = ?, updated_time = ? WHERE id = ?', [name, weight, updatedAt, id], function (err) {
-      if (err) {
-        res.status(500).json({ error: err.message });
-        return;
-      }
-      res.json({ data: { id, name: name, updated_time: updatedAt } });
-      broadcastMessage({event: 'update_restaurant', data: { id, name, updated_time: updatedAt } }, req)
-    });
-  });
+    await db.run('UPDATE restaurants SET name = ?, weight = ?, updated_time = ? WHERE id = ?', [name, weight, updatedAt, id]);
+    res.json({ data: { id, name: name, updated_time: updatedAt } });
+    broadcastMessage({event: 'update_restaurant', data: { id, name, updated_time: updatedAt } }, req);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
+app.delete('/api/restaurants/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updatedAt = normalizeDateTime(new Date());
 
-app.delete('/api/restaurants/:id', (req, res) => {
-  const { id } = req.params;
-  const updatedAt = normalizeDateTime(new Date());
-
-  db.run('UPDATE restaurants SET disabled = 1, updated_time = ? WHERE id = ?', [updatedAt, id], function (err) {
-    if (err) {
-      res.status(500).json({ error: err.message });
-      return;
-    }
+    const db = await dbPromise;
+    await db.run('UPDATE restaurants SET disabled = 1, updated_time = ? WHERE id = ?', [updatedAt, id]);
     res.status(200).send();
-    broadcastMessage({event: 'delete_restaurant', data: { id, updated_time: updatedAt } }, req)
-  });
+    broadcastMessage({event: 'delete_restaurant', data: { id, updated_time: updatedAt } }, req);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-app.post('/api/spin', (req, res) => {
-  db.all('SELECT * FROM restaurants WHERE disabled = 0', (err, rows) => {
-    if (err) {
-      res.status(500).json({ error: err.message });
-      return;
-    }
+app.post('/api/spin', async (req, res) => {
+  try {
+    const db = await dbPromise;
+    const rows = await db.all('SELECT * FROM restaurants WHERE disabled = 0');
 
     if (!rows.length) {
       res.status(404).json({ error: '没有饭店信息' });
       return;
     }
 
-    const weightedList = rows.flatMap((restaurant) =>
-      Array(restaurant.weight).fill(restaurant)
-    );
+    const weightedList = rows.flatMap((restaurant) => Array(restaurant.weight).fill(restaurant));
 
     if (!weightedList.length) {
       res.status(404).json({ error: '所有饭店的权重均为0' });
@@ -486,81 +285,70 @@ app.post('/api/spin', (req, res) => {
     const randomIndex = getRandomInt(0, weightedList.length);
     const selectedRestaurant = weightedList[randomIndex];
     const ip = normalizeIp(req.clientIp || req.ip);
-    const timestamp = Math.floor(Date.now() / 1000) // Unix时间戳
-    const create_uniqueId = req.cookies.uniqueId
+    const timestamp = Math.floor(Date.now() / 1000); // Unix时间戳
+    const create_uniqueId = req.cookies.uniqueId;
 
-    db.get('SELECT * FROM userInfo WHERE uniqueId = ?', [create_uniqueId], (err, row) => {
-      if (err) {
-        res.status(500).json({ error: err.message });
-        return;
-      }
+    const row = await db.get('SELECT * FROM userInfo WHERE uniqueId = ?', [create_uniqueId]);
+    const create_user_id = row.id;
 
-      const create_user_id = row.id
+    await db.run('INSERT INTO selections (restaurant_id, ip, timestamp, create_user_id) VALUES (?, ?, ?, ?)', [selectedRestaurant.id, ip, timestamp, create_user_id]);
 
-      db.run('INSERT INTO selections (restaurant_id, ip, timestamp, create_user_id) VALUES (?, ?, ?, ?)', [selectedRestaurant.id, ip, timestamp, create_user_id], function (err) {
-        if (err) {
-          res.status(500).json({ error: err.message });
-          return;
-        }
-  
-        const data = {
-          name: selectedRestaurant.name,
-          ip,
-          timestamp,
-        }
-        res.json(data);
-        broadcastMessage({event: 'spin', data }, req)
-      });
+    const data = {
+      name: selectedRestaurant.name,
+      ip,
+      timestamp,
+    };
+    res.json(data);
+    broadcastMessage({event: 'spin', data }, req);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/history", async (req, res) => {
+  try {
+    const db = await dbPromise;
+    const rows = await db.all(
+      `
+      SELECT * FROM today_selections
+      WHERE disabled = 0
+      ORDER BY timestamp DESC
+      LIMIT 3000
+    `,
+      []
+    );
+    res.json({
+      data: rows.map((row) => ({
+        ...row,
+        timestamp: normalizeDateTime(new Date(row.timestamp * 1000)),
+      })),
     });
-  });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-app.get("/api/history", (req, res) => {
-  db.all(
-    `
-    SELECT * FROM today_selections
-    WHERE disabled = 0
-    ORDER BY timestamp DESC
-    LIMIT 3000
-  `,
-    [],
-    (err, rows) => {
-      if (err) {
-        res.status(500).json({ error: err.message });
-        return;
-      }
-      res.json({
-        data: rows.map((row) => ({
-          ...row,
-          timestamp: normalizeDateTime(new Date(row.timestamp * 1000)),
-        })),
-      });
-    }
-  );
-});
+app.delete('/api/history', async (req, res) => {
+  try {
+    const updatedAt = normalizeDateTime(new Date());
 
-app.delete('/api/history', (req, res) => {
-  const updatedAt = normalizeDateTime(new Date());
-
-  db.run(`UPDATE selections SET disabled = 1 WHERE DATE(timestamp, 'unixepoch', 'localtime') = DATE('now', 'localtime')`, [], function (err) {
-    if (err) {
-      res.status(500).json({ error: err.message });
-      return;
-    }
+    const db = await dbPromise;
+    await db.run(`UPDATE selections SET disabled = 1 WHERE DATE(timestamp, 'unixepoch', 'localtime') = DATE('now', 'localtime')`, []);
     res.status(200).send();
-    broadcastMessage({event: 'delete_today_history', data: { updated_time: updatedAt } }, req)
-  });
+    broadcastMessage({event: 'delete_today_history', data: { updated_time: updatedAt } }, req);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// 获取前端版本号
-app.get("/api/version", (req, res) => {
-  db.get("SELECT version FROM version WHERE id = 1", (err, row) => {
-    if (err) {
-      res.status(500).json({ error: err.message });
-      return;
-    }
+app.get("/api/version", async (req, res) => {
+  try {
+    const db = await dbPromise;
+    const row = await db.get("SELECT version FROM version WHERE id = 1");
     res.json({ version: row.version });
-  });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 function getLocalIp() {
@@ -577,6 +365,9 @@ function getLocalIp() {
 
 const localIp = getLocalIp();
 
-httpServer.listen(port, () => {
-  console.log(`Server running at http://${localIp}:${port}`);
-});
+
+serializeDb().then(() => {
+  httpServer.listen(port, () => {
+    console.log(`Server running at http://${localIp}:${port}`);
+  });
+})
