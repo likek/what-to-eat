@@ -59,11 +59,12 @@ function resetRound() {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
-  fetchRestaurants().finally(() => {
+  registeUserId().then(() => {
+    return fetchRestaurants()
+  }).then(() => {
     fetchHistory();
   });
   checkForUpdates();
-  registeUserId();
 });
 
 function registeUserId() {
