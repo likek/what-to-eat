@@ -1,17 +1,11 @@
 import express from 'express';
 import cors from 'cors';
-import rateLimit from 'express-rate-limit';
-import fs from 'fs';
-import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
-import useragent from 'useragent';
 import cookieParser from 'cookie-parser';
 import cookie from 'cookie';
-import Searcher from './server/ip2region.js';
 import http from 'http';
 import WebSocket, { WebSocketServer } from 'ws';
 import os from 'os';
-import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 import dbPromise from './server/db.js';
 import { serializeDb } from './server/dbserialize.js';
@@ -31,10 +25,6 @@ const normalizeDateTime = (time) => {
 function getRandomInt(min, max) {
   return crypto.randomInt(min, max);
 }
-
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 const httpServer = http.createServer(app);
 const wss = new WebSocketServer({ server: httpServer });
@@ -131,7 +121,7 @@ async function tryRegister(req, res) {
 
   if (!row) {
     // 如果不存在，则插入
-    await db.run(`INSERT INTO userInfo (uniqueId, ip, create_time, update_time, userAgent, region, device, os, browser) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
+    await db.run(`INSERT OR IGNORE INTO userInfo (uniqueId, ip, create_time, update_time, userAgent, region, device, os, browser) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
       uniqueId,
       userInfo.userIp,
       userInfo.requestTime,
@@ -184,16 +174,31 @@ app.get('/api/userInfo', async (req, res) => {
   }
 });
 
-wss.on('connection', (ws, req) => {
+wss.on('connection', async (ws, req) => {
   const cookies = cookie.parse(req.headers.cookie || '');
-  const uniqueId = cookies.uniqueId;
-  console.log(`[${new Date().toLocaleString()}]用户${uniqueId}已连接`)
-  clientsById.set(uniqueId, ws);
+  const userId = cookies.uniqueId;
+  const reqInfo = await getRequestInfo(req);
+
+  console.log(`[${new Date().toLocaleString()}]用户${userId}已连接`)
+  clientsById.set(userId, ws);
   broadcastOnlineUsers(req, (id, currUserId) => true);
   ws.on('close', () => {
-    clientsById.delete(uniqueId);
-    console.log(`[${new Date().toLocaleString()}]用户${uniqueId}已断开`)
+    clientsById.delete(userId);
+    console.log(`[${new Date().toLocaleString()}]用户${userId}已断开`)
     broadcastOnlineUsers(req);
+    writeWsLog({
+      userId,
+      userIp: reqInfo.userIp,
+      userRegion: reqInfo?.region,
+      action: "disconnect",
+    });
+  });
+
+  writeWsLog({
+    userId,
+    userIp: reqInfo.userIp,
+    userRegion: reqInfo?.region,
+    action: "connect",
   });
 });
 
