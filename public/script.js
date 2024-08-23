@@ -410,6 +410,8 @@ function fetchHistory() {
     .then((data) => {
       const statistics = document.getElementById("statistics");
       const historyList = document.getElementById("history-list");
+      const reset_round = document.getElementById("reset_round");
+      reset_round.style.display = data.data.length > 0 ? 'block' : 'none';
       historyList.innerHTML = "";
       statistics.innerHTML = "";
       statistics.style.textAlign='left';
