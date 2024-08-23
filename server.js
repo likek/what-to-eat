@@ -13,6 +13,7 @@ import { limiter } from "./server/middleware/limiter.js";
 import { checkBlacklist } from "./server/middleware/blackList.js";
 import { normalizeIp, getRequestInfo } from './server/utils/index.js';
 import { writeRequestLog, writeWsLog } from './server/logManager.js';
+import serverConfig from './serverConfig.js';
 
 const app = express();
 const port = 3000;
@@ -35,7 +36,7 @@ app.use(checkBlacklist);
 app.use(limiter);
 app.use(cors());
 app.use(express.json());
-app.use(express.static("public"));
+app.use(express.static(serverConfig.frontendHome));
 
 app.use(writeRequestLog);
 
@@ -226,9 +227,9 @@ app.post('/api/restaurants', async (req, res) => {
       return;
     }
 
-    await db.run('INSERT INTO restaurants (name, weight, created_time, updated_time) VALUES (?, ?, ?, ?)', [name, weight, createdAt, updatedAt]);
-    res.json({ data: { id: this.lastID, name, created_time: createdAt, updated_time: updatedAt } });
-    broadcastMessage({event: 'create_restaurant', data: { id: this.lastID, name, created_time: createdAt } }, req);
+    const result = await db.run('INSERT INTO restaurants (name, weight, created_time, updated_time) VALUES (?, ?, ?, ?)', [name, weight, createdAt, updatedAt]);
+    res.json({ data: { id: result.lastID, name, created_time: createdAt, updated_time: updatedAt } });
+    broadcastMessage({event: 'create_restaurant', data: { id: result.lastID, name, created_time: createdAt } }, req);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

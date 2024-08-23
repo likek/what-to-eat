@@ -88,7 +88,7 @@ const initAll = async () => {
 
   await db.run(`
     CREATE VIEW IF NOT EXISTS today_selections AS
-    SELECT s.restaurant_id, r.name, s.ip, s.timestamp, s.create_user_id, s.disabled
+    SELECT s.restaurant_id, r.name, s.ip, s.timestamp, s.create_user_id, s.disabled, s.id
     FROM selections s
     JOIN restaurants r ON s.restaurant_id = r.id
     WHERE DATE(s.timestamp, 'unixepoch', 'localtime') = DATE('now', 'localtime') AND r.disabled = 0;
