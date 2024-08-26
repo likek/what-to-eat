@@ -27,8 +27,12 @@ declare global {
   }
 
   function httpFetch(url: RequestInfo | URL, params?: RequestInit): Promise<Response> {
-    const baseServer = import.meta.env.VITE_BASE_SERVER || "";
-    return fetch(`${baseServer}${url}`, params)
+    const isDevelopment = import.meta.env.MODE === 'development';
+    const baseServer = import.meta.env.VITE_BASE_SERVER || (isDevelopment ? `http://${window.location.hostname}:3000` : ``);
+    return fetch(`${baseServer}${url}`, {
+      credentials: 'include',
+      ...params
+    })
   }
 
   export {

@@ -34,7 +34,16 @@ const clientsById = new Map();
 app.use(cookieParser());
 app.use(checkBlacklist);
 app.use(limiter);
-app.use(cors());
+app.use(cors({
+  origin: function (origin, callback) {
+    if (!origin || /^http:\/\/.*:5173$/.test(origin) || origin.includes('.cpolar.cn')) {
+      callback(null, true);
+    } else {
+      callback(new Error(`Not allowed by CORS: ${origin}`));
+    }
+  },
+  credentials: true
+}));
 app.use(express.json());
 app.use(express.static(serverConfig.frontendHome));
 

@@ -19,15 +19,15 @@
       </div>
       <div v-show="errorMessage">{{ errorMessage }}</div>
       <button class="spin-button" @click="spinWheel" :disabled="btnSpinDisabled">今天吃什么</button>
-      <div id="selected-restaurant">
+      <div class="selected-restaurant">
         <span v-if="currRestaurant">今天吃{{ currRestaurant.name }}</span>
       </div>
-      <div id="selection-info"></div>
-      <div id="statistics" v-html="statisticsTxt"></div>
+      <div class="selection-info"></div>
+      <div v-html="statisticsTxt"></div>
       <div style="display: flex;justify-content: end;">
         <button v-if="historyList.length" id="reset_round" style="background-color: burlywood;" @click="resetRound()">重开一轮</button>
       </div>
-      <div id="history-list">
+      <div class="history-list">
         <div
         v-for="(entry) in historyList"
         :key="entry.id"
@@ -365,12 +365,12 @@ function highlightRestaurant(restaurant: IRestaurant | undefined) {
 
 async function fetchHistory() {
   try {
+    const response = await httpFetch('/api/history').then(res => res.json());
+    const data = response.data as ISelectionItem[];
+
     colorOfIpMap.value = {};
     latestItemOfIpMap.value = {}
     restaurantCountMap.value = {}
-
-    const response = await httpFetch('/api/history').then(res => res.json());
-    const data = response.data as ISelectionItem[];
 
     let cIndex = 0;
     for(let i = data.length - 1; i >= 0; i--) {
@@ -541,14 +541,14 @@ button:active {
   background-color: #ccc;
 }
 
-#selected-restaurant,
-#selection-info {
+.selected-restaurant,
+.selection-info {
   margin-top: 5px;
   font-size: 1rem;
   color: #28a745;
 }
 
-#history-list {
+.history-list {
   margin-top: 5px;
   text-align: left;
   /* max-height: 150px; */
@@ -596,8 +596,8 @@ button:active {
     font-size: 1.5rem;
   }
 
-  #selected-restaurant,
-  #selection-info {
+  .selected-restaurant,
+  .selection-info {
     font-size: 16px;
   }
 }
