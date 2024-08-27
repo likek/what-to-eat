@@ -404,7 +404,7 @@ async function fetchHistory() {
 
     const restaurants = Object.values(restaurantCountMap.value)
     const statisticsStr = Object.values(restaurantCountMap.value).map(item => `${item.data.name}<span style='color: #f00;'>${item.count}</span>票`).join('、');
-    const totalCount = Object.keys(latestItemOfIpMap).length;
+    const totalCount = Object.keys(latestItemOfIpMap.value).length;
     if (!totalCount) {
       statisticsTxt.value = `<span style="color: #999;">今天还没有用户投票，快来投一票吧！</spna>`
     } else {
